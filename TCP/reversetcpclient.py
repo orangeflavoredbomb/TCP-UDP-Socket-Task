@@ -147,7 +147,7 @@ def main():
         if recv_type == 4:
             # 严格按照老师文档的要求打印终端输出
             print(f"第 {i+1} 块: reverse的文本: {reversed_data}")
-            final_reversed_text += reversed_data
+            final_reversed_text = reversed_data + final_reversed_text # 整体全部反转
         
         # 游标向前推进
         current_index += size
