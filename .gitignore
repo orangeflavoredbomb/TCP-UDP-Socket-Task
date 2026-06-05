@@ -1,4 +1,5 @@
 __pycache__/
 *.pyc
 .vscode/
-run_log.txt
+reversed_test.txt
+test.txt

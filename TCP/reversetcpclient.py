@@ -2,6 +2,7 @@ import socket                     				#导入socket模块
 import struct
 import random
 import os
+import datetime
 
 # ============================ 报文头部封装/解封装============================================
 # 1. 封装 Initialization 报文 (Type 1)
@@ -80,7 +81,22 @@ def prepare_file_chunks(file_path, l_min, l_max, seed_val):
     
     return file_content, chunk_sizes, n_blocks
 
-
+# =========================== 日志记录工具 ==================================
+def log_event(action, msg_type, detail=""):
+    """
+    action: "Send" 或 "Receive"
+    msg_type: 报文的 Type (1, 2, 3, 4)
+    detail: 附加信息（比如块数、长度等）
+    """
+    now = datetime.datetime.now()
+    # %f 会输出 6 位微秒，我们用 [:-3] 截取前 3 位变成毫秒，与 Wireshark 更好对齐
+    time_str = now.strftime('%H:%M:%S.%f')[:-1] # 3位太少了，改成5位
+    
+    log_line = f"[{time_str}] {action} | Type: {msg_type} | {detail}\n"
+    
+    # 用追加模式 ('a') 写入文件
+    with open('run_log.txt', 'a', encoding='utf-8') as f:
+        f.write(log_line)
 
 # ============================ 核心主流程 ===========================================
 def main():
@@ -102,15 +118,21 @@ def main():
     print(f"文件总大小: {len(file_content)} Bytes, 将分为 {n_blocks} 块发送。")
 
     print("[2] 正在连接服务器...")
+    # 每次运行前，先清空/初始化日志文件
+    with open('run_log.txt', 'w', encoding='utf-8') as f:
+        f.write("=== TCP Reverse Client Run Log ===\n")
+       
     clientsocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #创建客户机socket
     clientsocket.connect((server_ip, server_port)) #连接到服务器
 
     # 第一步：发送 Init 报文 (Type=1)
     clientsocket.send(pack_init_packet(n_blocks))
+    log_event("Send", 1, f"N={n_blocks}")
     print(f"-> 发送 Initialization 报文, N={n_blocks}")
 
     # 第二步：接收 agree 报文 (Type=2)
     msg_type, _ = receive_packet(clientsocket)
+    log_event("Received", msg_type)
     if msg_type != 2:
         print("Error: 握手失败，未收到 agree 报文！")
         clientsocket.close()
@@ -118,19 +140,6 @@ def main():
     print("<- 收到 agree 报文，允许发送。\n")
 
     # 第三步：循环发送 request (Type=3) 并接收 answer (Type=4)
-    # # 伪代码演示如何根据切片大小提取真实文本
-    # current_index = 0
-    # for i, size in enumerate(chunk_sizes):
-    #     # 利用 Python 的切片语法截取对应长度的文本
-    #     chunk_text = file_content[current_index : current_index + size]
-
-    #     # 打包并发送 (用到我们之前写的 struct 函数)
-    #     packet = pack_request_packet(chunk_text)
-    #     clientsocket.send(packet)
-
-    #     # 游标向前推进
-    #     current_index += size
-
     current_index = 0
     final_reversed_text = ""
 
@@ -140,13 +149,15 @@ def main():
         
         # 发送
         clientsocket.send(pack_request_packet(chunk_text))
+        log_event("Send", 3, f"Block {i+1}, Length: {size}")
         print(f"-> 发送第 {i+1} 块数据 ({size} 字节)")
 
         # 接收
         recv_type, reversed_data = receive_packet(clientsocket)
+        log_event("Receive", recv_type, f"Block {i+1}")
+
         if recv_type == 4:
-            # 严格按照老师文档的要求打印终端输出
-            print(f"第 {i+1} 块: reverse的文本: {reversed_data}")
+            print(f"第 {i+1} 块: 反转的文本: {reversed_data}")
             final_reversed_text = reversed_data + final_reversed_text # 整体全部反转
         
         # 游标向前推进
