@@ -80,7 +80,7 @@ rtt_list = []            # 记录每一次成功 ACK 的 RTT 列表
 # ============================ 接收子线程 ============================================
 def receive_acks(clientsocket):
     global server_ip, server_port
-    global send_base, timer_running, timer_start_time, packet_info, rtt_list
+    global send_base, timer_running, timer_start_time, packet_info, rtt_list, actual_sent_packets
     global TIMEOUT_SEC, estimated_rtt_ms, dev_rtt_ms # 动态超时时间
     global last_ack_received, dup_ack_count # 快速重传
 
@@ -133,7 +133,7 @@ def receive_acks(clientsocket):
                         else:
                             timer_start_time = time.time() # 还有没确认的，重启定时器
 
-                    # 快速重传
+                    # 快速重传：1个包
                     elif ack_num == send_base - 1:
                         # 收到冗余ACK
                         dup_ack_count += 1
@@ -145,8 +145,34 @@ def receive_acks(clientsocket):
                             packet_info[send_base]['send_time'] = time.time()
                             # 瞬间单发这一个包
                             clientsocket.sendto(sndpkt[send_base], (server_ip, server_port))
+                            actual_sent_packets += 1 
                             # 快速重传后清零防止重复触发
                             dup_ack_count = 0
+
+                    # # 快速重传：全部窗口
+                    # elif ack_num == send_base - 1:
+                    #     # 收到冗余ACK
+                    #     dup_ack_count += 1
+                    #     log_print(f"[*] 收到冗余 ACK {ack_num}，当前计数: {dup_ack_count}")
+                        
+                    #     if dup_ack_count == 3:
+                    #         log_print(f"\n[快速重传] 连续3次收到 ACK {ack_num}，瞬间重传整个窗口 (Seq={send_base} 到 {next_seq_num-1}) ！")
+                            
+                    #         # 遍历当前在途的所有包，全部重新发射
+                    #         for i in range(send_base, next_seq_num):
+                    #             # 重置发送时间，防止下一次收到 ACK 时 RTT 计算异常
+                    #             packet_info[i]['send_time'] = time.time()
+                    #             clientsocket.sendto(sndpkt[i], (server_ip, server_port))
+                                
+                    #             actual_sent_packets += 1 
+                                
+                    #             start_b = packet_info[i]['start']
+                    #             end_b = packet_info[i]['end']
+                    #             log_print(f"-> [快速重传] 重传第 {i} 个（第 {start_b}~{end_b} 字节）数据包")
+
+                    #         # 快速重传后清零防止重复触发
+                    #         dup_ack_count = 0
+                    #         log_print("") # 打印空行方便观察
 
         except socket.timeout:
             # 为了防止死锁
@@ -226,6 +252,9 @@ def main():
     # 更改 socket 超时时间。设短一点（如0.05秒），这样 recv_thread 可以频繁检查循环条件
     clientsocket.settimeout(0.05) 
     
+    # 开始传输的绝对时间戳
+    transfer_start_time = time.time()
+
     # 启动专门负责接收 ACK 的子线程
     recv_thread = threading.Thread(target=receive_acks, args=(clientsocket,))
     recv_thread.start()
@@ -300,15 +329,22 @@ def main():
     # ============ 3) 收尾与Pandas统计 ============ 
     # 等待接收线程自然结束（当 send_base > total_packets 时，子线程循环会退出）
     recv_thread.join()
+    total_transfer_time = time.time() - transfer_start_time # 传输总用时
     log_print("\n[+] 所有文件数据均已成功发送并获得 ACK 确认！客户端关闭。")
 
     log_print("\n================= 【传输汇总】 =================")
-    # 计算丢包率 (1 - 原定发包数/实际发包总数)
+    log_print(f"传输总用时: {total_transfer_time:.3f} 秒")
+
+    # 吞吐量 = 文件总字节数 / 总用时 (单位: 字节/秒，或者 KB/s)
+    throughput = (file_len / total_transfer_time) / 1024.0 if total_transfer_time > 0 else 0
+    log_print(f"有效网络吞吐量: {throughput:.2f} KB/s")
+
+    # 丢包率 (1 - 原定发包数/实际发包总数)
     loss_rate = (1 - (total_packets / actual_sent_packets)) * 100 if actual_sent_packets > 0 else 0
     log_print(f"原定包数: {total_packets} | 实际发送包数 (含重传): {actual_sent_packets}")
     log_print(f"丢包率: {loss_rate:.2f}% ")
     
-    # 召唤 Pandas 大法计算统计量
+    # 计算统计量
     if rtt_list:
         df = pd.Series(rtt_list)
         log_print(f"最大RTT: {df.max():.2f} ms")
