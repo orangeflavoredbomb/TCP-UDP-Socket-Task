@@ -42,7 +42,7 @@ def pack_sequence_packet(seq_num, text_str): # 封装数据报文
 
 def log_print(msg): # 打印函数：既在终端输出，又带上毫秒时间戳写入 run_log.txt
     now = datetime.datetime.now()
-    time_str = now.strftime('%H:%M:%S.%f')[:-1] # 保留5位小数
+    time_str = now.strftime('%H:%M:%S.%f')[:-3] # 保留3位小数
     print(msg)
     with open('run_log.txt', 'a', encoding='utf-8') as f:
         f.write(f"[{time_str}] {msg}\n")
@@ -50,7 +50,7 @@ def log_print(msg): # 打印函数：既在终端输出，又带上毫秒时间�
 # ============================ GBN 核心状态与锁 ============================================
 send_base = 1
 next_seq_num = 1
-window_size = 5          # 400字节窗口 / 80字节单包 = 5个包
+window_size = 400        # 400 Bytes
 total_packets = 0        # 总包数
 TIMEOUT_SEC = 0.3        # 300ms 超时
 
@@ -95,7 +95,7 @@ def receive_acks(clientsocket):
                             # ================== 动态超时时间 ==================
                             if estimated_rtt_ms is None: # 第一次算
                                 estimated_rtt_ms = rtt_ms
-                                dev_rtt_ms = rtt_ms / 2.0 # from TCP官方标准文档 RFC 6298
+                                dev_rtt_ms = rtt_ms / 2.0 # TCP官方标准文档 RFC 6298 规定
                             else:
                                 alpha = 0.125
                                 beta = 0.25
@@ -207,7 +207,17 @@ def main():
     while send_base <= total_packets:
         with lock:
             # 1. [发送新包] 检查窗口是否有空余，且还有数据没发完
-            while next_seq_num < send_base + window_size and next_seq_num <= total_packets:
+            while next_seq_num <= total_packets:
+                # 【新增】动态计算当前窗口里“正在飞 (未被 ACK)”的字节总数
+                bytes_in_flight = 0
+                for i in range(send_base, next_seq_num):
+                    bytes_in_flight += (packet_bounds[i][1] - packet_bounds[i][0] + 1)
+                
+                # 看看如果强行加上准备发的下一个包，会不会撑爆 400 字节的物理窗口？
+                next_chunk_size = len(chunks[next_seq_num - 1])
+                if bytes_in_flight + next_chunk_size > window_size:
+                    break  # 窗口满了！强行刹车跳出循环，等收到 ACK 腾出空间再发
+
                 # 获取真实文本块 (注意数组下标从0开始，而序号从1开始)
                 chunk_data = chunks[next_seq_num - 1]
                 
