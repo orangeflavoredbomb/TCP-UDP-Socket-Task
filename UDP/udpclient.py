@@ -48,6 +48,10 @@ def log_print(msg): # 打印函数：既在终端输出，又带上毫秒时间�
         f.write(f"[{time_str}] {msg}\n")
 
 # ============================ GBN 核心状态与锁 ============================================
+# 模拟命令行参数 (IP, Port)
+server_ip = '127.0.0.1'
+server_port = 8000
+
 send_base = 1
 next_seq_num = 1
 window_size = 400        # 400 Bytes
@@ -62,6 +66,10 @@ timer_start_time = 0     # 定时器启动时间
 timer_running = False    # 定时器状态
 lock = threading.Lock()  # 线程锁
 
+# 快速重传
+last_ack_received = 0
+dup_ack_count = 0
+
 sndpkt = {} # 存储已发送但未确认的包 (用于超时重传)，格式: {seq_num: 封装好的完整二进制报文}
 packet_info = {} # 存储每个包的发送时间和数据范围(开始-结束)，格式: {seq_num: {'send_time': float, 'start': int, 'end': int}}
 
@@ -71,9 +79,11 @@ rtt_list = []            # 记录每一次成功 ACK 的 RTT 列表
 
 # ============================ 接收子线程 ============================================
 def receive_acks(clientsocket):
+    global server_ip, server_port
     global send_base, timer_running, timer_start_time, packet_info, rtt_list
-    global TIMEOUT_SEC, estimated_rtt_ms, dev_rtt_ms 
-    
+    global TIMEOUT_SEC, estimated_rtt_ms, dev_rtt_ms # 动态超时时间
+    global last_ack_received, dup_ack_count # 快速重传
+
     while send_base <= total_packets:
         try:
             data, _ = clientsocket.recvfrom(1024)
@@ -91,7 +101,11 @@ def receive_acks(clientsocket):
                             start_b = packet_info[i]['start']
                             end_b = packet_info[i]['end']
                             log_print(f"<- [ACK 收到] 第 {i} 个（第 {start_b}~{end_b} 共 {end_b - start_b + 1} 字节）server 端已经收到，RTT 是 {rtt_ms:.2f} ms")
-                            
+
+                            # 快速重传
+                            last_ack_received = ack_num
+                            dup_ack_count = 0 # 无冗余ACK
+
                             # ================== 动态超时时间 ==================
                             if estimated_rtt_ms is None: # 第一次算
                                 estimated_rtt_ms = rtt_ms
@@ -107,7 +121,7 @@ def receive_acks(clientsocket):
                             # 转换为秒更新给全局变量，为了防止网络极好时算出接近0的超时导致无限重传，设置一个 0.05s (50ms) 的下限
                             TIMEOUT_SEC = max(0.05, new_timeout_ms / 1000.0)
 
-                        log_print(f"[*] 动态更新 Timeout: 变为 {TIMEOUT_SEC*1000:.2f} ms，(EstRTT={estimated_rtt_ms:.2f}, DevRTT={dev_rtt_ms:.2f})")
+                        log_print(f"[*] 动态更新 Timeout: 变为 {TIMEOUT_SEC*1000:.2f} ms (EstRTT={estimated_rtt_ms:.2f}, DevRTT={dev_rtt_ms:.2f})")
                         # =================================================
 
                         #print(f"<- [ACK 收到] 累计确认 Seq={ack_num}，窗口向前滑动")
@@ -118,6 +132,22 @@ def receive_acks(clientsocket):
                             timer_running = False  # 关停定时器
                         else:
                             timer_start_time = time.time() # 还有没确认的，重启定时器
+
+                    # 快速重传
+                    elif ack_num == send_base - 1:
+                        # 收到冗余ACK
+                        dup_ack_count += 1
+                        log_print(f"[*] 收到冗余 ACK {ack_num}，当前计数: {dup_ack_count}")
+                        
+                        if dup_ack_count == 3:
+                            log_print(f"[快速重传] 连续3次收到 ACK {ack_num}，瞬间重传 Seq={send_base} ！")
+                            # 重置发送时间
+                            packet_info[send_base]['send_time'] = time.time()
+                            # 瞬间单发这一个包
+                            clientsocket.sendto(sndpkt[send_base], (server_ip, server_port))
+                            # 快速重传后清零防止重复触发
+                            dup_ack_count = 0
+
         except socket.timeout:
             # 为了防止死锁
             continue
@@ -125,16 +155,13 @@ def receive_acks(clientsocket):
 # ============================ 主函数 ============================================
 
 def main():
+    global server_ip, server_port
     global send_base, next_seq_num, total_packets, timer_running, \
         timer_start_time, TIMEOUT_SEC, sndpkt, packet_info, actual_sent_packets
 
     # 每次运行前清空旧日志
     with open('run_log.txt', 'w', encoding='utf-8') as f:
         f.write("=== UDP GBN Client Run Log ===\n")
-        
-    # 模拟命令行参数 (IP, Port)
-    server_ip = '127.0.0.1'
-    server_port = 8000
 
     # ============ 0) 读取文件并动态随机切块 ============ 
     file_path = 'test.txt'
