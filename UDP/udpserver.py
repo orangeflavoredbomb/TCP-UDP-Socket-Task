@@ -59,6 +59,9 @@ def main():
                 print(f"[+] 验证通过！合法学号后四位: {decrypted_id:04d}")
                 serversocket.sendto(pack_udp_agree(), address)
                 expected_seq_num = 1  # 握手成功后，重置期望的序号
+
+                random.seed(42) # 每次新握手，重置seed
+
             else:
                 print(f"[-] 非法连接！解密结果: {decrypted_id}")
 

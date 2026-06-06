@@ -5,6 +5,8 @@ import time
 import threading
 import os
 import random
+import datetime
+import pandas as pd
 
 # ============================ 报文头部封装/解封装 ============================================
 def pack_udp_handshake(student_id): # 封装握手报文
@@ -30,7 +32,6 @@ def parse_incoming_udp_packet(data): # 解封装服务器响应报文
     
     return None, None
 
-
 def pack_sequence_packet(seq_num, text_str): # 封装数据报文
     encoded_data = text_str.encode('ascii')
     length_of_data = len(encoded_data)
@@ -38,6 +39,13 @@ def pack_sequence_packet(seq_num, text_str): # 封装数据报文
     header = struct.pack("!HII", 3, seq_num, length_of_data)
     # 拼接真实数据并返回
     return header + encoded_data
+
+def log_print(msg): # 打印函数：既在终端输出，又带上毫秒时间戳写入 run_log.txt
+    now = datetime.datetime.now()
+    time_str = now.strftime('%H:%M:%S.%f')[:-1] # 保留5位小数
+    print(msg)
+    with open('run_log.txt', 'a', encoding='utf-8') as f:
+        f.write(f"[{time_str}] {msg}\n")
 
 # ============================ GBN 核心状态与锁 ============================================
 send_base = 1
@@ -50,10 +58,12 @@ timer_start_time = 0     # 定时器启动时间
 timer_running = False    # 定时器状态
 lock = threading.Lock()  # 线程锁
 
-# 存储已发送但未确认的包 (用于超时重传)
-# 格式: {seq_num: 封装好的完整二进制报文}
-sndpkt = {}
+sndpkt = {} # 存储已发送但未确认的包 (用于超时重传)，格式: {seq_num: 封装好的完整二进制报文}
 packet_info = {} # 存储每个包的发送时间和数据范围(开始-结束)，格式: {seq_num: {'send_time': float, 'start': int, 'end': int}}
+
+# Pandas统计
+actual_sent_packets = 0  # 实际发送的 UDP 数据包数量
+rtt_list = []            # 记录每一次成功 ACK 的 RTT 列表
 
 # ============================ 接收子线程 ============================================
 def receive_acks(clientsocket):
@@ -71,9 +81,11 @@ def receive_acks(clientsocket):
                         for i in range(send_base, ack_num + 1):
                             # 计算单包 RTT
                             rtt_ms = (time.time() - packet_info[i]['send_time']) * 1000
+                            rtt_list.append(rtt_ms) # pd统计
+
                             start_b = packet_info[i]['start']
                             end_b = packet_info[i]['end']
-                            print(f"<- [ACK 收到] 第 {i} 个（第 {start_b}~{end_b} 共 {end_b - start_b + 1} 字节）server 端已经收到，RTT 是 {rtt_ms:.2f} ms")
+                            log_print(f"<- [ACK 收到] 第 {i} 个（第 {start_b}~{end_b} 共 {end_b - start_b + 1} 字节）server 端已经收到，RTT 是 {rtt_ms:.2f} ms")
 
                         #print(f"<- [ACK 收到] 累计确认 Seq={ack_num}，窗口向前滑动")
                         send_base = ack_num + 1
@@ -84,33 +96,61 @@ def receive_acks(clientsocket):
                         else:
                             timer_start_time = time.time() # 还有没确认的，重启定时器
         except socket.timeout:
-            # 为了防止死锁即可
+            # 为了防止死锁
             continue
 
 # ============================ 主函数 ============================================
 
 def main():
     global send_base, next_seq_num, total_packets, timer_running, \
-        timer_start_time, TIMEOUT_SEC, sndpkt
+        timer_start_time, TIMEOUT_SEC, sndpkt, packet_info, actual_sent_packets
 
+    # 每次运行前清空旧日志
+    with open('run_log.txt', 'w', encoding='utf-8') as f:
+        f.write("=== UDP GBN Client Run Log ===\n")
+        
     # 模拟命令行参数 (IP, Port)
     server_ip = '127.0.0.1'
     server_port = 8000
-    file_path = 'test.txt'  # 待发送的文本文件路径
 
-    # 读取文件并切块（每块 80 字节）
+    # ============ 0) 读取文件并动态随机切块 ============ 
+    file_path = 'test.txt'
     if not os.path.exists(file_path):
         print(f"Error: 找不到文件 {file_path}")
         return
     with open(file_path, 'r', encoding='ascii') as f:
         file_content = f.read()
-        
-    chunk_size = 80
-    # 将字符串按 80 字节切块
-    chunks = [file_content[i:i+chunk_size] for i in range(0, len(file_content), chunk_size)]
-    total_packets = len(chunks)
-    print(f"[*] 文件读取完毕，总大小 {len(file_content)} 字节，分为 {total_packets} 个包。")
     
+    random.seed(42)
+
+    chunks = []
+    current_index = 0
+    file_len = len(file_content)
+    
+    # 存储每个包的真实字节边界，格式: {seq_num: (start, end)} (int: tuple(int,int))
+    packet_bounds = {} 
+    pkt_id = 1
+
+    while current_index < file_len:
+        # 随机决定当前块的大小
+        current_chunk_size = random.randint(40, 80)
+        chunk_data = file_content[current_index : current_index + current_chunk_size]
+        
+        chunks.append(chunk_data)
+        
+        # 计算并记录当前包的绝对字节流边界 (1-based)
+        start_byte = current_index + 1
+        end_byte = current_index + len(chunk_data)
+        packet_bounds[pkt_id] = (start_byte, end_byte)
+        
+        current_index += len(chunk_data)
+        pkt_id += 1
+
+    total_packets = len(chunks)
+    log_print(f"[*] 文件读取完毕，总大小 {file_len} 字节。")
+    log_print(f"[*] 采用[40,80]字节动态随机切片，共分为 {total_packets} 个数据包。")
+
+
     # 创建 UDP Socket
     clientsocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) 	#创建客户机socket
    
@@ -119,7 +159,7 @@ def main():
 
     # ============ 1) 握手阶段 ============
     while True:
-        print("-> 正在发送握手请求...")
+        log_print("-> 正在发送握手请求...")
         clientsocket.sendto(pack_udp_handshake(2624), (server_ip, server_port))
 
         try:
@@ -127,10 +167,10 @@ def main():
             response, _ = clientsocket.recvfrom(1024)
             msg_type, _ = parse_incoming_udp_packet(response)
             if msg_type == 2:
-                print("[+] 握手成功！准备进入 GBN 传输阶段。\n")
+                log_print("[+] 握手成功！准备进入 GBN 传输阶段。\n")
                 break
         except socket.timeout:
-            print("[-] 握手超时，重试中...")
+            log_print("[-] 握手超时，重试中...")
             
     # ============ 2) GBN 传输阶段 ============
     # 更改 socket 超时时间。设短一点（如0.05秒），这样 recv_thread 可以频繁检查循环条件
@@ -143,14 +183,13 @@ def main():
     # 发送流水线主循环
     while send_base <= total_packets:
         with lock:
-            # 1. 检查窗口是否有空余，且还有数据没发完
+            # 1. [发送新包] 检查窗口是否有空余，且还有数据没发完
             while next_seq_num < send_base + window_size and next_seq_num <= total_packets:
                 # 获取真实文本块 (注意数组下标从0开始，而序号从1开始)
                 chunk_data = chunks[next_seq_num - 1]
                 
                 # 计算这个包的字节边界 x 和 y
-                start_byte = (next_seq_num - 1) * chunk_size + 1
-                end_byte = start_byte + len(chunk_data) - 1
+                start_byte, end_byte = packet_bounds[next_seq_num]
                 
                 # 记录到字典中
                 packet_info[next_seq_num] = {
@@ -165,8 +204,10 @@ def main():
                 
                 # 发送
                 clientsocket.sendto(packet, (server_ip, server_port))
+                actual_sent_packets += 1
+
                 #print(f"-> [发送新包] Seq={next_seq_num}, DataLen={len(chunk_data)}")
-                print(f"-> [发送新包] 第 {next_seq_num} 个（第 {start_byte}~{end_byte} 共 {len(chunk_data)} 字节）client 端已经发送")
+                log_print(f"-> [发送新包] 第 {next_seq_num} 个（第 {start_byte}~{end_byte} 共 {len(chunk_data)} 字节）client 端已经发送")
 
                 # 如果是窗口中的第一个包，启动定时器
                 if send_base == next_seq_num:
@@ -175,29 +216,46 @@ def main():
                 
                 next_seq_num += 1
 
-            # 2. 检查定时器是否超时
+            # 2. [超时重传] 检查定时器是否超时
             if timer_running and (time.time() - timer_start_time) >= TIMEOUT_SEC:
-                print(f"\n[!!!] 触发超时！等待 {TIMEOUT_SEC}s 未收到 ACK {send_base}，开始 Go-Back-N 重传")
-                # 重新启动定时器
-                timer_start_time = time.time()
+                log_print(f"\n[!!!] 触发超时！等待 {TIMEOUT_SEC}s 未收到 ACK {send_base}，开始 Go-Back-N 重传")
+                
+                timer_start_time = time.time() # 重新启动定时器
+
                 # 暴力回退：将 send_base 到 next_seq_num-1 的所有包全部重发
                 for i in range(send_base, next_seq_num):
                     packet_info[i]['send_time'] = time.time() # 更新发送时间
                     clientsocket.sendto(sndpkt[i], (server_ip, server_port))
-                    #print(f"-> [重发] Seq={i}")
-                    start_b = packet_info[i]['start']
-                    end_b = packet_info[i]['end']
-                    print(f"-> [重发] 重传第 {i} 个（第 {start_b}~{end_b} 字节）数据包")
+                    actual_sent_packets += 1
 
-                print() # 打印空行方便观察
+                    #print(f"-> [重发] Seq={i}")
+                    start_b, end_b = packet_bounds[i]
+                    log_print(f"-> [重发] 重传第 {i} 个（第 {start_b}~{end_b} 字节）数据包")
+
+                log_print("") # 打印空行方便观察
         
         # 释放锁，稍微睡一会儿，把 CPU 执行权让给接收线程
         time.sleep(0.01)
 
-    # 3) 传输完成，等待接收线程结束
+    # ============ 3) 收尾与Pandas统计 ============ 
     # 等待接收线程自然结束（当 send_base > total_packets 时，子线程循环会退出）
     recv_thread.join()
-    print("\n[+] 所有文件数据均已成功发送并获得 ACK 确认！客户端关闭。")
+    log_print("\n[+] 所有文件数据均已成功发送并获得 ACK 确认！客户端关闭。")
+
+    log_print("\n================= 【传输汇总】 =================")
+    # 计算丢包率 (1 - 原定发包数/实际发包总数)
+    loss_rate = (1 - (total_packets / actual_sent_packets)) * 100 if actual_sent_packets > 0 else 0
+    log_print(f"原定包数: {total_packets} | 实际发送包数 (含重传): {actual_sent_packets}")
+    log_print(f"丢包率: {loss_rate:.2f}% ")
+    
+    # 召唤 Pandas 大法计算统计量
+    if rtt_list:
+        df = pd.Series(rtt_list)
+        log_print(f"最大RTT: {df.max():.2f} ms")
+        log_print(f"最小RTT: {df.min():.2f} ms")
+        log_print(f"平均RTT: {df.mean():.2f} ms")
+        log_print(f"RTT的标准差: {df.std():.2f} ms")
+    log_print("================================================\n")
 
     clientsocket.close() #关闭客户机socket
 
