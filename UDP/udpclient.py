@@ -54,6 +54,10 @@ window_size = 5          # 400字节窗口 / 80字节单包 = 5个包
 total_packets = 0        # 总包数
 TIMEOUT_SEC = 0.3        # 300ms 超时
 
+# 动态计算超时时间
+estimated_rtt_ms = None
+dev_rtt_ms = None
+
 timer_start_time = 0     # 定时器启动时间
 timer_running = False    # 定时器状态
 lock = threading.Lock()  # 线程锁
@@ -67,7 +71,8 @@ rtt_list = []            # 记录每一次成功 ACK 的 RTT 列表
 
 # ============================ 接收子线程 ============================================
 def receive_acks(clientsocket):
-    global send_base, timer_running, timer_start_time
+    global send_base, timer_running, timer_start_time, packet_info, rtt_list
+    global TIMEOUT_SEC, estimated_rtt_ms, dev_rtt_ms 
     
     while send_base <= total_packets:
         try:
@@ -86,6 +91,24 @@ def receive_acks(clientsocket):
                             start_b = packet_info[i]['start']
                             end_b = packet_info[i]['end']
                             log_print(f"<- [ACK 收到] 第 {i} 个（第 {start_b}~{end_b} 共 {end_b - start_b + 1} 字节）server 端已经收到，RTT 是 {rtt_ms:.2f} ms")
+                            
+                            # ================== 动态超时时间 ==================
+                            if estimated_rtt_ms is None: # 第一次算
+                                estimated_rtt_ms = rtt_ms
+                                dev_rtt_ms = rtt_ms / 2.0 # from TCP官方标准文档 RFC 6298
+                            else:
+                                alpha = 0.125
+                                beta = 0.25
+                                estimated_rtt_ms = (1 - alpha) * estimated_rtt_ms + alpha * rtt_ms
+                                dev_rtt_ms = (1 - beta) * dev_rtt_ms + beta * abs(rtt_ms - estimated_rtt_ms)
+
+                            # 算出新的超时时间 (ms)
+                            new_timeout_ms = estimated_rtt_ms + 4 * dev_rtt_ms
+                            # 转换为秒更新给全局变量，为了防止网络极好时算出接近0的超时导致无限重传，设置一个 0.05s (50ms) 的下限
+                            TIMEOUT_SEC = max(0.05, new_timeout_ms / 1000.0)
+
+                        log_print(f"[*] 动态更新 Timeout: 变为 {TIMEOUT_SEC*1000:.2f} ms，(EstRTT={estimated_rtt_ms:.2f}, DevRTT={dev_rtt_ms:.2f})")
+                        # =================================================
 
                         #print(f"<- [ACK 收到] 累计确认 Seq={ack_num}，窗口向前滑动")
                         send_base = ack_num + 1
@@ -218,7 +241,7 @@ def main():
 
             # 2. [超时重传] 检查定时器是否超时
             if timer_running and (time.time() - timer_start_time) >= TIMEOUT_SEC:
-                log_print(f"\n[!!!] 触发超时！等待 {TIMEOUT_SEC}s 未收到 ACK {send_base}，开始 Go-Back-N 重传")
+                log_print(f"\n[!!!] 触发超时！等待 {TIMEOUT_SEC:.2f}s 未收到 ACK {send_base}，开始 Go-Back-N 重传")
                 
                 timer_start_time = time.time() # 重新启动定时器
 

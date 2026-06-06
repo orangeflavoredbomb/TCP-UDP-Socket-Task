@@ -1,6 +1,7 @@
 import socket 											#导入socket模块	
 import struct
 import random
+import time
 
 # ============================ 报文头部封装/解封装 ============================================
 def pack_udp_agree(): # 封装服务器同意连接的报文
@@ -36,12 +37,13 @@ def main():
     serversocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) #创建服务器socket
     serversocket.bind(('127.0.0.1', 8000)) #绑定到IP地址和端口号
     
+    # 假设丢包率
+    DROP_RATE = 0.05
+
     print("=======================================")
     print("  UDP GBN Server 已启动，等待握手...  ")
+    print(f"   ---  模拟丢包率：{DROP_RATE*100:.1f} %  ---   ")
     print("=======================================")
-
-    # 假设丢包率为 30%
-    DROP_RATE = 0.3
 
     expected_seq_num = 1  # 期望的下一个序号，初始为1
 
@@ -76,6 +78,9 @@ def main():
             
             # GBN 核心接收逻辑：判断是不是我想要的那个包
             if seq_num == expected_seq_num:
+                # 模拟真实互联网的延迟波动：随机延迟 20ms 到 150ms 
+                time.sleep(random.uniform(0.02, 0.15))
+
                 print(f"[+] 顺序正确！收到数据 Seq={seq_num}，内容片段: {text_data[:15]}...")
                 # 收下，并回复对应序号的 ACK
                 serversocket.sendto(pack_udp_ack(expected_seq_num), address)
