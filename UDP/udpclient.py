@@ -9,11 +9,14 @@ import datetime
 import pandas as pd
 
 # ============================ 报文头部封装/解封装 ============================================
+
+# !代表网络字节序（网络标准的大端模式，高位在前）
+# H 代表2字节无符号短整型，I 代表4字节无符号整型
+
 def pack_udp_handshake(student_id): # 封装握手报文
     # 异或运算
     encrypted_id = student_id ^ 0x5A3C
     # 打包 Type 1 报文: 2个 unsigned short (共 4 Bytes)
-    # ! 代表网络字节序，H 代表 2 字节无符号整数
     return struct.pack('!HH', 1, encrypted_id)
 
 def parse_incoming_udp_packet(data): # 解封装服务器响应报文
@@ -48,7 +51,6 @@ def log_print(msg): # 打印函数：既在终端输出，又带上毫秒时间�
         f.write(f"[{time_str}] {msg}\n")
 
 # ============================ GBN 核心状态与锁 ============================================
-# 模拟命令行参数 (IP, Port)
 server_ip = '127.0.0.1'
 server_port = 8000
 
@@ -78,8 +80,8 @@ actual_sent_packets = 0  # 实际发送的 UDP 数据包数量
 rtt_list = []            # 记录每一次成功 ACK 的 RTT 列表
 
 # ============================ 接收子线程 ============================================
+
 def receive_acks(clientsocket):
-    global server_ip, server_port
     global send_base, timer_running, timer_start_time, packet_info, rtt_list, actual_sent_packets
     global TIMEOUT_SEC, estimated_rtt_ms, dev_rtt_ms # 动态超时时间
     global last_ack_received, dup_ack_count # 快速重传
@@ -121,7 +123,7 @@ def receive_acks(clientsocket):
                             # 转换为秒更新给全局变量，为了防止网络极好时算出接近0的超时导致无限重传，设置一个 0.05s (50ms) 的下限
                             TIMEOUT_SEC = max(0.05, new_timeout_ms / 1000.0)
 
-                        log_print(f"[*] 动态更新 Timeout: 变为 {TIMEOUT_SEC*1000:.2f} ms (EstRTT={estimated_rtt_ms:.2f}, DevRTT={dev_rtt_ms:.2f})")
+                        log_print(f"      [*] 动态更新 Timeout: 变为 {TIMEOUT_SEC*1000:.2f} ms (EstRTT={estimated_rtt_ms:.2f}, DevRTT={dev_rtt_ms:.2f})")
                         # =================================================
 
                         #print(f"<- [ACK 收到] 累计确认 Seq={ack_num}，窗口向前滑动")
@@ -137,7 +139,7 @@ def receive_acks(clientsocket):
                     elif ack_num == send_base - 1:
                         # 收到冗余ACK
                         dup_ack_count += 1
-                        log_print(f"[*] 收到冗余 ACK {ack_num}，当前计数: {dup_ack_count}")
+                        log_print(f"      [*] 收到冗余 ACK {ack_num}，当前计数: {dup_ack_count}")
                         
                         if dup_ack_count == 3:
                             log_print(f"[快速重传] 连续3次收到 ACK {ack_num}，瞬间重传 Seq={send_base} ！")
@@ -153,7 +155,7 @@ def receive_acks(clientsocket):
                     # elif ack_num == send_base - 1:
                     #     # 收到冗余ACK
                     #     dup_ack_count += 1
-                    #     log_print(f"[*] 收到冗余 ACK {ack_num}，当前计数: {dup_ack_count}")
+                    #     log_print(f"      [*] 收到冗余 ACK {ack_num}，当前计数: {dup_ack_count}")
                         
                     #     if dup_ack_count == 3:
                     #         log_print(f"\n[快速重传] 连续3次收到 ACK {ack_num}，瞬间重传整个窗口 (Seq={send_base} 到 {next_seq_num-1}) ！")
@@ -181,9 +183,8 @@ def receive_acks(clientsocket):
 # ============================ 主函数 ============================================
 
 def main():
-    global server_ip, server_port
-    global send_base, next_seq_num, total_packets, timer_running, \
-        timer_start_time, TIMEOUT_SEC, sndpkt, packet_info, actual_sent_packets
+    global send_base, next_seq_num, total_packets, timer_running, timer_start_time
+    global TIMEOUT_SEC, sndpkt, packet_info, actual_sent_packets
 
     # 每次运行前清空旧日志
     with open('run_log.txt', 'w', encoding='utf-8') as f:
@@ -230,7 +231,7 @@ def main():
     # 创建 UDP Socket
     clientsocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) 	#创建客户机socket
    
-    # 超时时间为 300ms
+    # 初始超时时间为 300ms
     clientsocket.settimeout(TIMEOUT_SEC)
 
     # ============ 1) 握手阶段 ============
@@ -249,9 +250,6 @@ def main():
             log_print("[-] 握手超时，重试中...")
             
     # ============ 2) GBN 传输阶段 ============
-    # 更改 socket 超时时间。设短一点（如0.05秒），这样 recv_thread 可以频繁检查循环条件
-    clientsocket.settimeout(0.05) 
-    
     # 开始传输的绝对时间戳
     transfer_start_time = time.time()
 

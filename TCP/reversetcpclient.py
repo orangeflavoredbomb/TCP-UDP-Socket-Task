@@ -3,6 +3,7 @@ import struct
 import random
 import os
 import datetime
+import sys
 
 # ============================ 报文头部封装/解封装============================================
 # 1. 封装 Initialization 报文 (Type 1)
@@ -17,20 +18,19 @@ def pack_request_packet(text_str):
     return header + encoded_text
 
 # 3. 解析接收到的报文（通用的解析逻辑）
-# 因为客户端要接收 Type 2 和 Type 4，我们可以写一个通用的接收解析器
 def receive_packet(sock):
-    # 先严格读取 2 字节，解析出 Type
+    # 先读取 2 字节，解析出 Type
     type_bytes = sock.recv(2)
     if not type_bytes:
         return None, None
     msg_type, = struct.unpack('!H', type_bytes)
     
     if msg_type == 2:
-        # agree 报文没有后续内容
+        # Type1(agree报文): 没有后续内容
         return msg_type, None
         
     elif msg_type == 4:
-        # reverseAnswer 报文，接下来还有 4 字节的长度
+        # Type3(reverseAnswer报文): 接下来还有 4 字节的长度
         len_bytes = sock.recv(4)
         data_len, = struct.unpack('!I', len_bytes)
         # 根据长度，读取对应大小的真实数据
@@ -45,7 +45,7 @@ def prepare_file_chunks(file_path, l_min, l_max, seed_val):
     读取文件，并根据指定的 Lmin, Lmax 和 seed 进行随机分块
     返回：完整的文件内容(字符串), 每一块的大小列表, 块数 N
     """
-    # 1. 设定随机数种子，保证每次测试分块结果一致（极其重要！）
+    # 1. 设定随机数种子，保证每次测试分块结果一致
     random.seed(seed_val)
     
     # 2. 读取 ASCII 文件内容
@@ -60,7 +60,7 @@ def prepare_file_chunks(file_path, l_min, l_max, seed_val):
     chunk_sizes = []
     current_sum = 0
     
-    # 3. 核心切片逻辑（完全按照你的思路）
+    # 3. 核心切片逻辑
     while current_sum < total_size:
         remaining_size = total_size - current_sum
         
@@ -100,13 +100,28 @@ def log_event(action, msg_type, detail=""):
 
 # ============================ 核心主流程 ===========================================
 def main():
-    # 模拟命令行参数 (为了方便你现在测试，先写死，之后再换成 sys.argv)
     server_ip = '127.0.0.1'
     server_port = 8000
-    file_path = 'test.txt'  # 你需要在同级目录下建一个纯英文的 test.txt
-    l_min = 50
-    l_max = 100
+    file_path = 'test.txt'  
     seed_val = 42
+
+    # sys.argv[0] 是脚本名本身，sys.argv[1] 是第一个参数，以此类推
+    if len(sys.argv) == 3:
+        try:
+            l_min = int(sys.argv[1])
+            l_max = int(sys.argv[2])
+        except ValueError:
+            print("[-] 错误：Lmin 和 Lmax 必须是有效的整数！")
+            print("示例: python3 reversetcpclient.py 50 100")
+            return
+    else:
+        # 缺省提示，防止调试时忘了加参数直接报错
+        print("[*] 用法提示: python3 reversetcpclient.py <Lmin> <Lmax>")
+        print("[*] 示例: python3 reversetcpclient.py 50 100")
+        print("[*] 未检测到命令行参数，将采用默认值 Lmin=50, Lmax=100\n")
+        l_min = 50
+        l_max = 100
+
 
     print("[1] 正在读取并计算文件分块...")
     file_content, chunk_sizes, n_blocks = prepare_file_chunks(file_path, l_min, l_max, seed_val)
