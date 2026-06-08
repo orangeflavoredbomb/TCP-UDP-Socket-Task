@@ -185,6 +185,27 @@ def receive_acks(clientsocket):
 def main():
     global send_base, next_seq_num, total_packets, timer_running, timer_start_time
     global TIMEOUT_SEC, sndpkt, packet_info, actual_sent_packets
+    global server_ip, server_port
+
+    # --- 默认配置 ---
+    server_ip = '127.0.0.1'
+    server_port = 8000
+
+    # ==================== 命令行参数解析 =====================
+    # 期望格式: python udpclient.py <ServerIP> <ServerPort>
+    if len(sys.argv) == 3:
+        server_ip = sys.argv[1]
+        try:
+            server_port = int(sys.argv[2])
+        except ValueError:
+            print("[-] 错误：端口必须是整数！")
+            return
+    elif len(sys.argv) > 1:
+        print("[-] 用法: python3 udpclient.py <ServerIP> <ServerPort>")
+        return
+    else:
+        print("[*] 提示: 未指定参数，采用默认连接 127.0.0.1:8000")
+    # ========================================================
 
     # 每次运行前清空旧日志
     with open('run_log.txt', 'w', encoding='utf-8') as f:

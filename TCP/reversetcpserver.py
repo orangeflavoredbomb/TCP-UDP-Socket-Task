@@ -1,6 +1,8 @@
 import socket                   		#导入socket模块
 import threading                	#导入threading模块
 import struct
+import time
+import sys
 
 # ============================ 报文头部封装/解封装 ============================================
 # 1. 封装 agree 报文 (Type 2)
@@ -61,6 +63,9 @@ def handle_client(clientsocket, clientaddress):
         for i in range(n_blocks):
             msg_type, data_text = parse_incoming_packet(clientsocket)
             
+            # # 用于观察多个client并行
+            # time.sleep(2) # 睡2秒，模拟处理大文件或者卡顿
+
             if msg_type != 3:
                 print(f"[-] 数据传输中断，期待 Type=3，实际收到 Type={msg_type}")
                 break
@@ -86,31 +91,69 @@ def handle_client(clientsocket, clientaddress):
 
 # ============================ 服务器启动代码 ============================================
 
-serversocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #创建服务器socket（IPv4、TCP套接字）
-serversocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) #允许端口复用
+def main():
+    # --- 默认配置 ---
+    server_ip = '127.0.0.1'
+    server_port = 8000
 
-serversocket.bind(('127.0.0.1', 8000)) 
-serversocket.listen(5)             			
-print("=======================================")
-print("  TCP Reverse Server 已启动，等待连接...  ")
-print("=======================================")
-
-serversocket.settimeout(1.0) # 设置1秒超时
-
-try:
-    while True:
+    # ==================== 命令行参数解析 ====================
+    # 期望格式: python reversetcpserver.py <IP> <Port>
+    if len(sys.argv) == 3:
+        server_ip = sys.argv[1]
         try:
-            clientsocket, clientaddress = serversocket.accept()
-            # 为每个客户端创建一个新线程
-            client_thread = threading.Thread(target=handle_client, args=(clientsocket, clientaddress))
-            # 设置为守护线程：主线程结束时，子线程也会跟着结束
-            client_thread.daemon = True 
-            client_thread.start()
-        except socket.timeout: # 超时后继续循环，这时可以响应 Ctrl+C
-            continue
-except KeyboardInterrupt:
-    print("\n[信号] 检测到中断，服务器正在关闭...")
-finally:
-    serversocket.close()
-    print("服务器已关闭。")
+            server_port = int(sys.argv[2])
+            # 端口合法性校验
+            if not (1024 <= server_port <= 49151):
+                raise ValueError("端口范围应在 1024-49151 之间")
+        except ValueError as e:
+            print(f"[-] 参数错误: {e}")
+            print("[*] 用法: python3 reversetcpserver.py <IP> <Port>")
+            print("    - IP 示例: 127.0.0.1 (本地), 0.0.0.0 (局域网全监听)")
+            print("    - Port 范围: 1024-49151 (推荐使用 8000)")
+            return
+    elif len(sys.argv) > 1:
+        print("[-] 命令行参数数量错误！")
+        print("用法: python3 reversetcpserver.py <IP> <Port>")
+        print("示例: python3 reversetcpserver.py 127.0.0.1 8000")
+        print("提示: 若要允许局域网连接，请使用 0.0.0.0 8000")
+        return
+    else:
+        print("[*] 用法提示: python3 reversetcpserver.py <IP> <Port>")
+        print("[*] 未检测到命令行参数，采用默认配置: 监听 IP=127.0.0.1, Port=8000\n")
+    # ========================================================
 
+    serversocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #创建服务器socket（IPv4、TCP套接字）
+    serversocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) #允许端口复用
+    try:
+        serversocket.bind((server_ip, server_port)) 
+    except Exception as e:
+        print(f"[-] 端口绑定失败 ({server_ip} : {server_port}): {e}")
+        return
+    
+    serversocket.listen(5)             			
+    print("=======================================")
+    print("  TCP Reverse Server 已启动，等待连接...  ")
+    print(f"  [监听地址] -> {server_ip} : {server_port}  ")
+    print("=======================================")
+
+    serversocket.settimeout(1.0) # 设置1秒超时
+
+    try:
+        while True:
+            try:
+                clientsocket, clientaddress = serversocket.accept()
+                # 为每个客户端创建一个新线程
+                client_thread = threading.Thread(target=handle_client, args=(clientsocket, clientaddress))
+                # 设置为守护线程：主线程结束时，子线程也会跟着结束
+                client_thread.daemon = True 
+                client_thread.start()
+            except socket.timeout: # 超时后继续循环，这时可以响应 Ctrl+C
+                continue
+    except KeyboardInterrupt:
+        print("\n[信号] 检测到中断，服务器正在关闭...")
+    finally:
+        serversocket.close()
+        print("服务器已关闭。")
+
+if __name__ == '__main__':
+    main()

@@ -100,29 +100,38 @@ def log_event(action, msg_type, detail=""):
 
 # ============================ 核心主流程 ===========================================
 def main():
+    # --- 默认配置 ---
     server_ip = '127.0.0.1'
     server_port = 8000
     file_path = 'test.txt'  
     seed_val = 42
+    l_min = 50
+    l_max = 100
 
-    # sys.argv[0] 是脚本名本身，sys.argv[1] 是第一个参数，以此类推
-    if len(sys.argv) == 3:
+    # ==================== 命令行参数解析 ====================
+    # 期望格式: python reversetcpclient.py <IP> <Port> <Lmin> <Lmax>
+    if len(sys.argv) == 5:
+        server_ip = sys.argv[1] # sys.argv[0] 是脚本名本身，sys.argv[1] 是第一个参数，以此类推
         try:
-            l_min = int(sys.argv[1])
-            l_max = int(sys.argv[2])
+            server_port = int(sys.argv[2])
+            l_min = int(sys.argv[3])
+            l_max = int(sys.argv[4])
         except ValueError:
-            print("[-] 错误：Lmin 和 Lmax 必须是有效的整数！")
-            print("示例: python3 reversetcpclient.py 50 100")
+            print("[-] 错误：端口、Lmin 和 Lmax 必须是有效的整数！")
+            print("示例: python3 reversetcpclient.py 127.0.0.1 8000 50 100")
             return
+    elif len(sys.argv) > 1:
+        # 如果带了参数但数量不对（比如只输了2个），给予提示并退出，防止误操作
+        print("[-] 命令行参数数量错误！")
+        print("用法: python3 reversetcpclient.py <ServerIP> <ServerPort> <Lmin> <Lmax>")
+        print("示例: python3 reversetcpclient.py 127.0.0.1 8000 50 100")
+        return
     else:
-        # 缺省提示，防止调试时忘了加参数直接报错
-        print("[*] 用法提示: python3 reversetcpclient.py <Lmin> <Lmax>")
-        print("[*] 示例: python3 reversetcpclient.py 50 100")
-        print("[*] 未检测到命令行参数，将采用默认值 Lmin=50, Lmax=100\n")
-        l_min = 50
-        l_max = 100
-
-
+        # 一个参数都没带，静默使用默认值（方便你本地平时点击运行测试）
+        print("[*] 用法提示: python3 reversetcpclient.py <ServerIP> <ServerPort> <Lmin> <Lmax>")
+        print("[*] 未检测到命令行参数，采用默认配置: IP=127.0.0.1, Port=8000, Lmin=50, Lmax=100\n")
+    # ========================================================
+  
     print("[1] 正在读取并计算文件分块...")
     file_content, chunk_sizes, n_blocks = prepare_file_chunks(file_path, l_min, l_max, seed_val)
 

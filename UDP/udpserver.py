@@ -2,6 +2,7 @@ import socket 											#导入socket模块
 import struct
 import random
 import time
+import sys
 
 # ============================ 报文头部封装/解封装 ============================================
 def pack_udp_agree(): # 封装服务器同意连接的报文
@@ -31,17 +32,42 @@ def pack_udp_ack(seq_num): # 封装 ACK 报文
     return struct.pack("!HI", 4, seq_num)
 
 # ============================ 主函数 ============================================
-
 def main():
+    # --- 默认值 ---
+    server_ip = '127.0.0.1'
+    server_port = 8000
+    
+    # ==================== 命令行参数解析 ====================
+    if len(sys.argv) == 3:
+        server_ip = sys.argv[1]
+        try:
+            server_port = int(sys.argv[2])
+            if not (1024 <= server_port <= 49151):
+                raise ValueError("端口范围应在 1024-49151 之间")
+        except ValueError as e:
+            print(f"[-] 参数错误: {e}")
+            print("[*] 用法: python3 udpserver.py <IP> <Port>")
+            return
+    elif len(sys.argv) > 1:
+        print("[-] 用法: python3 udpserver.py <IP> <Port>")
+        return
+    else:
+        print("[*] 提示: 未指定参数，采用默认监听 127.0.0.1:8000")
+        
     # 1. 创建服务器 Socket
     serversocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) #创建服务器socket
-    serversocket.bind(('127.0.0.1', 8000)) #绑定到IP地址和端口号
+    try:
+        serversocket.bind((server_ip, server_port))
+    except Exception as e:
+        print(f"[-] 端口绑定失败 ({server_ip}:{server_port}): {e}")
+        return
     
-    # 假设丢包率
+    # 模拟丢包率
     DROP_RATE = 0.05
 
     print("=======================================")
     print("  UDP GBN Server 已启动，等待握手...  ")
+    print(f"  [监听地址] -> {server_ip} : {server_port}  ")
     print(f"   ---  模拟丢包率：{DROP_RATE*100:.1f} %  ---   ")
     print("=======================================")
 
