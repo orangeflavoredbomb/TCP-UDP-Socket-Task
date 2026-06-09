@@ -49,6 +49,7 @@ def main():
             print("[*] 用法: python3 udpserver.py <IP> <Port>")
             return
     elif len(sys.argv) > 1:
+        print("[-] 命令行参数数量错误！")
         print("[-] 用法: python3 udpserver.py <IP> <Port>")
         return
     else:
@@ -115,7 +116,7 @@ def main():
             else:
                 # 收到了包，但不是按顺序来的（乱序，或者前面的丢了）
                 print(f"[*] 乱序/重复！期望 Seq={expected_seq_num}, 却收到 Seq={seq_num}。丢弃并重传上一 ACK。")
-                # 无情丢弃该数据包，并再次发送上一成功包的 ACK（冗余 ACK）
+                # 丢弃该数据包，并再次发送上一成功包的 ACK（冗余 ACK）
                 # 注意：如果连第 1 个包都没收到，预期是 1，那就回发 ACK 0
                 serversocket.sendto(pack_udp_ack(expected_seq_num - 1), address)
 

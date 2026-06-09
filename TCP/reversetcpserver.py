@@ -1,7 +1,6 @@
 import socket                   		#导入socket模块
 import threading                	#导入threading模块
 import struct
-import time
 import sys
 
 # ============================ 报文头部封装/解封装 ============================================

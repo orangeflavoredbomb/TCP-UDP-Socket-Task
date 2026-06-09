@@ -10,9 +10,6 @@ import pandas as pd
 
 # ============================ 报文头部封装/解封装 ============================================
 
-# !代表网络字节序（网络标准的大端模式，高位在前）
-# H 代表2字节无符号短整型，I 代表4字节无符号整型
-
 def pack_udp_handshake(student_id): # 封装握手报文
     # 异或运算
     encrypted_id = student_id ^ 0x5A3C
@@ -135,7 +132,13 @@ def receive_acks(clientsocket):
                         else:
                             timer_start_time = time.time() # 还有没确认的，重启定时器
 
-                    # 快速重传：1个包
+                    # ==========================================================
+                    # 【快速重传策略开关】
+                    # 默认启用 策略A（单包重传）。如需测试全窗口重传的拥塞崩溃现象，
+                    # 可注释掉策略A，并解除 策略B 的注释。(ctrl+l)
+                    # ==========================================================
+
+                    # --- 策略 A：单包快速重传 (当前启用) ---
                     elif ack_num == send_base - 1:
                         # 收到冗余ACK
                         dup_ack_count += 1
@@ -151,7 +154,7 @@ def receive_acks(clientsocket):
                             # 快速重传后清零防止重复触发
                             dup_ack_count = 0
 
-                    # # 快速重传：全部窗口
+                    # # --- 策略 B：全窗口快速重传 (备用/对比测试) ---
                     # elif ack_num == send_base - 1:
                     #     # 收到冗余ACK
                     #     dup_ack_count += 1
@@ -175,6 +178,7 @@ def receive_acks(clientsocket):
                     #         # 快速重传后清零防止重复触发
                     #         dup_ack_count = 0
                     #         log_print("") # 打印空行方便观察
+                    # ==========================================================
 
         except socket.timeout:
             # 为了防止死锁
@@ -195,12 +199,13 @@ def main():
     # 期望格式: python udpclient.py <ServerIP> <ServerPort>
     if len(sys.argv) == 3:
         server_ip = sys.argv[1]
-        try:
+        try: 
             server_port = int(sys.argv[2])
         except ValueError:
             print("[-] 错误：端口必须是整数！")
             return
     elif len(sys.argv) > 1:
+        print("[-] 命令行参数数量错误！")
         print("[-] 用法: python3 udpclient.py <ServerIP> <ServerPort>")
         return
     else:
@@ -256,8 +261,11 @@ def main():
     clientsocket.settimeout(TIMEOUT_SEC)
 
     # ============ 1) 握手阶段 ============
-    while True:
-        log_print("-> 正在发送握手请求...")
+    max_retries = 5  # 设置最大重试次数
+    retry_count = 0  # 当前重试计数
+
+    while retry_count < max_retries:
+        log_print(f"-> 正在发送握手请求 (尝试 {retry_count + 1}/{max_retries}) ...")
         clientsocket.sendto(pack_udp_handshake(2624), (server_ip, server_port))
 
         try:
@@ -268,7 +276,14 @@ def main():
                 log_print("[+] 握手成功！准备进入 GBN 传输阶段。\n")
                 break
         except socket.timeout:
+            retry_count += 1
             log_print("[-] 握手超时，重试中...")
+
+    # 退出循环后，检查是否是因为重试耗尽而退出
+    if retry_count >= max_retries:
+        log_print("[!] 致命错误：连续握手失败，服务器无响应。客户端已自动退出。")
+        clientsocket.close()
+        return # 直接结束程序，不进入后续逻辑
             
     # ============ 2) GBN 传输阶段 ============
     # 开始传输的绝对时间戳
@@ -288,7 +303,7 @@ def main():
                 for i in range(send_base, next_seq_num):
                     bytes_in_flight += (packet_bounds[i][1] - packet_bounds[i][0] + 1)
                 
-                # 看看如果强行加上准备发的下一个包，会不会撑爆 400 字节的物理窗口？
+                # 看看如果强行加上准备发的下一个包，会不会撑爆400字节的物理窗口？
                 next_chunk_size = len(chunks[next_seq_num - 1])
                 if bytes_in_flight + next_chunk_size > window_size:
                     break  # 窗口满了！强行刹车跳出循环，等收到 ACK 腾出空间再发
