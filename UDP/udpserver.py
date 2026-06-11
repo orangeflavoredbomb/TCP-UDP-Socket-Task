@@ -8,7 +8,7 @@ import sys
 def pack_udp_agree(): # 封装服务器同意连接的报文
     return struct.pack('!H', 2)
 
-def parse_incoming_udp_packet(data): # 解封装服务器响应报文
+def parse_incoming_udp_packet(data): # 解封装客户端响应报文
     if len(data) < 2:
         return None, None, None
     

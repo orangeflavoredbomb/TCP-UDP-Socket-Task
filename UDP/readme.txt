@@ -6,7 +6,7 @@ Task 2: UDP GBN Client & Server (基于 UDP 的可靠数据传输与拥塞控制
 - 操作系统：Windows / macOS / Linux 均可
 - 解释器：Python 3.x (推荐 3.6 及以上版本)
 - 依赖库：除 Python 标准库外，本程序引入了数据分析库 Pandas 用于最终的 RTT 统计核算。
-  * 运行前请确保已安装：`pip install pandas` (或 `pip3 install pandas`)
+  * 运行前请确保已安装：`pip install pandas` (或macOS输入 `pip3 install pandas`)
 
 【2. 文件结构】
 - udpserver.py : 服务端代码。采用无连接的单线程模型，内置了随机丢包与网络延迟抖动模拟器。
@@ -53,7 +53,23 @@ Task 2: UDP GBN Client & Server (基于 UDP 的可靠数据传输与拥塞控制
 1. 传输完成后，客户端控制台将打印【传输汇总】，包含：传输总用时、有效网络吞吐量、实际发包数、丢包率，以及最大/最小/平均 RTT 统计。
 2. 详细的每毫秒协议博弈过程（如收到冗余 ACK 触发快重传等），均已自动保存在当前目录下的 `run_log.txt` 中。
 
-【5. 本实验核心亮点声明】
+【5. 高阶拓展：跨电脑（局域网真实的双机）通信】
+如果您希望她人的电脑作为 Client 连接到您的 Server，请按以下步骤操作：
+
+1. Server 换地址：
+   在您的电脑上启动 Server 时，将监听 IP 设置为 `0.0.0.0`（代表监听所有网卡，允许局域网内的设备连入）：
+   > python udpserver.py 0.0.0.0 8000
+  (macOS请输入：python3 udpserver.py 0.0.0.0 8000)
+2. 查您的局域网 IP：
+   保持您的电脑连接在校园网/同一 WiFi 下。打开新终端，输入 `ipconfig` (Windows) 或 `ifconfig` (macOS/Linux)，查到您的真实局域网 IP（例如 192.168.1.100）。
+
+3. 她的 Client 发起连接：
+   让她在电脑上敲入命令，将目的地 IP 替换为您查到的 IP，如：
+   > python udpclient.py 192.168.1.100 8000
+  (macOS请输入：python3 udpclient.py 192.168.1.100 8000)
+此时，数据块将真正地跨越物理无线网络/网线，在两台真实的计算机之间完成协议握手与应用层自适应 GBN 可靠传输！
+
+【6. 本实验核心亮点声明】
 1. 精准的字节级窗口：打破按“包数”限制的常规思维，实现了完美契合 400 Bytes 的动态滑动窗口。
 2. 工业级自适应 RTT 估算：严格应用 TCP 标准的 EWMA 公式（Alpha=0.125, Beta=0.25），实现超时时间的毫秒级动态自适应收缩。
 3. 快速重传策略：程序监听冗余 ACK，在达到 3 次重复时瞬间单发重传，极大缩减了死等超时造成的拥塞真空期.

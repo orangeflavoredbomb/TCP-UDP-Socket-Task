@@ -123,7 +123,7 @@ def receive_acks(clientsocket):
                         log_print(f"      [*] 动态更新 Timeout: 变为 {TIMEOUT_SEC*1000:.2f} ms (EstRTT={estimated_rtt_ms:.2f}, DevRTT={dev_rtt_ms:.2f})")
                         # =================================================
 
-                        #print(f"<- [ACK 收到] 累计确认 Seq={ack_num}，窗口向前滑动")
+                        #print(f"<- [ACK 收到] 累积确认 Seq={ack_num}，窗口向前滑动")
                         send_base = ack_num + 1
                         
                         # 收到确认后，判断定时器去留
@@ -298,7 +298,7 @@ def main():
         with lock:
             # 1. [发送新包] 检查窗口是否有空余，且还有数据没发完
             while next_seq_num <= total_packets:
-                # 【新增】动态计算当前窗口里“正在飞 (未被 ACK)”的字节总数
+                # 动态计算当前窗口里“正在飞 (未被 ACK)”的字节总数
                 bytes_in_flight = 0
                 for i in range(send_base, next_seq_num):
                     bytes_in_flight += (packet_bounds[i][1] - packet_bounds[i][0] + 1)
@@ -363,6 +363,7 @@ def main():
     # ============ 3) 收尾与Pandas统计 ============ 
     # 等待接收线程自然结束（当 send_base > total_packets 时，子线程循环会退出）
     recv_thread.join()
+    
     total_transfer_time = time.time() - transfer_start_time # 传输总用时
     log_print("\n[+] 所有文件数据均已成功发送并获得 ACK 确认！客户端关闭。")
 
